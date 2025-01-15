@@ -1,0 +1,18 @@
+{
+  "single_page": [
+    "https://www.dailywarden.com/"
+  ],
+  "sitemap": [
+    "https://docs-one.zerolend.xyz/sitemap.xml"
+  ],
+  "scrap": [
+    {
+      "url": "https://aave.com/docs/developers/aave-v3",
+      "depth": 1,
+      "allow_external_links": false
+    }
+  ],
+  "youtube": [
+    "https://www.youtube.com/watch?v=1jkQn_dpROI"
+  ]
+}
