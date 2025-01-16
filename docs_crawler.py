@@ -78,6 +78,9 @@ def get_yt_transcript(url: str) -> str:
             # Remove timecodes and speaker names
             transcript_text = re.sub(r'\[\d+:\d+:\d+\]', '', transcript_text)
             transcript_text = re.sub(r'<\w+>', '', transcript_text)
+
+            print(f"Successfully crawled: {url}")
+
             return transcript_text
         except Exception as e:
             print(f"Error downloading transcript: {e}")
