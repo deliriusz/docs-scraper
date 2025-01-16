@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import hashlib
 import re
@@ -10,7 +11,6 @@ from xml.etree import ElementTree
 from typing import List
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
-# def scrape_recursively
 async def process_and_store_document(url: str, markdown: str, output_dir: str):
     """ Create output file name from url and save it. """
     # whole path max length in Windows/Linux/Mac seems to be 256, 120 is a good buffer,
@@ -87,8 +87,6 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
     """Crawl multiple URLs in parallel with a concurrency limit."""
     crawl_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
 
-    # Create the crawler instance
-
     try:
         # Create a semaphore to limit concurrency
         semaphore = asyncio.Semaphore(max_concurrent)
@@ -139,6 +137,7 @@ async def main(config_file: str, output_dir: str):
     browser_config = BrowserConfig(
         headless=True,
         verbose=False,
+        # performance improvements
         extra_args=["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox"],
     )
 
@@ -149,22 +148,12 @@ async def main(config_file: str, output_dir: str):
     urls = await get_unique_urls_from_config(config_file)
 
     await crawl_parallel(urls, output_dir, crawler, 10)
-    # with open(config_file) as json_data:
-    #     d = json.load(json_data)
-    #     print(d)
-    #     print(d["single_page"])
-    #
-    #     async with AsyncWebCrawler() as crawler:
-    #         result = await crawler.arun("https://docs-one.zerolend.xyz/")
-    #         print(result.markdown)
-    #         # print(result.fit_markdown)
-    #         print("f=====\n\n")
-    #         print(result.links["internal"])
-    #         print(result.links["external"])
-    #         # print(result.markdown[:300])  # Print first 300 chars
-
 
 if __name__ == "__main__":
-    config_file = 'test/docs.json'
-    output_dir = 'docs/'
+    if len(sys.argv) != 3:
+        print(f"Usage {sys.argv[0]} <json-config-file-path> <output-dir>")
+        exit(1)
+
+    config_file = sys.argv[1]
+    output_dir = sys.argv[2]
     asyncio.run(main(config_file, output_dir))

@@ -9,7 +9,7 @@ pip install -r requirements.txt
 
 ## Running
 ```shell
-python3 docs_scraper.py <json-vonfig-file-path> <output-dir>
+python3 docs_scraper.py <json-config-file-path> <output-dir>
 ```
 E.g.
 ```shell
