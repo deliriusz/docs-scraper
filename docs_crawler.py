@@ -1,6 +1,10 @@
+import os
 import asyncio
+import hashlib
+import re
 import json
-import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import TextFormatter
 import requests
 from xml.etree import ElementTree
 from typing import List
@@ -8,9 +12,31 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 # def scrape_recursively
 async def process_and_store_document(url: str, markdown: str, output_dir: str):
-    #TODO: implement
-    print(url)
-    print(markdown)
+    """ Create output file name from url and save it. """
+    # whole path max length in Windows/Linux/Mac seems to be 256, 120 is a good buffer,
+    # giving informative names. MD5 hash is 16 bytes (~32 characters).
+    max_file_name_len = 120
+
+    possible_doc_name_from_url = re.sub(r'https?://(www\.)?', '', url)
+    possible_doc_name_from_url = re.sub(r'[^a-zA-Z0-9-]', '_', possible_doc_name_from_url)
+
+    doc_name = ""
+
+    if len(possible_doc_name_from_url) > max_file_name_len:
+        doc_name = possible_doc_name_from_url[:max_file_name_len] + "_" + hashlib.md5(url.encode()).hexdigest()
+    else:
+        doc_name = possible_doc_name_from_url
+
+    output_path = output_dir + '/' + doc_name + ".md"
+
+    # normalize any //
+    output_path = re.sub(r'/+', '/', output_path)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    with open(output_path, 'w') as md_file:
+        md_file.write(markdown)
 
 
 async def get_unique_urls_from_config(config_file: str) -> List[str]:
@@ -34,15 +60,28 @@ async def get_unique_urls_from_config(config_file: str) -> List[str]:
         return list(output_urls)
 
 def get_yt_transcript(url: str) -> str:
-    # TODO: change to https://pypi.org/project/youtube-transcript-api/
-    ydl_opts = {
-        'write-thumbnail': True,
-        'skip-download': True,
-        'verbose': True
-    }
+    # Heavily inspired by https://github.com/AlteredAdmin/YouTube-Transcript-Downloader
+    pattern = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
+    match = re.search(pattern, url)
+    video_id = match.group(1) if match else None
 
-    with yt_dlp.YoutubeDL(params = ydl_opts) as ydl:
-        return ydl.download(url)
+    if video_id is None:
+        print(f"No video id found in url {url}")
+    else:
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcript_list.find_generated_transcript(['en'])
+
+            formatter = TextFormatter()
+            transcript_text = formatter.format_transcript(transcript.fetch())
+
+            # Remove timecodes and speaker names
+            transcript_text = re.sub(r'\[\d+:\d+:\d+\]', '', transcript_text)
+            transcript_text = re.sub(r'<\w+>', '', transcript_text)
+            return transcript_text
+        except Exception as e:
+            print(f"Error downloading transcript: {e}")
+            return ""
 
 async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, max_concurrent: int = 5):
     """Crawl multiple URLs in parallel with a concurrency limit."""
@@ -56,7 +95,7 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
 
         async def process_url(url: str):
             async with semaphore:
-                if "youtube.com" in url:
+                if "youtube.com" in url or "youtu.be" in url:
                     result = get_yt_transcript(url)
                     await process_and_store_document(url, result, output_dir)
                 else:
