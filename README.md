@@ -35,3 +35,7 @@ There is an exemplary docs list in `test/docs.json`. Generally the structure is 
 
 #### Note on sitemaps
 Many documentation pages have .../sitemap.xml, that lists all the pages in docs - (e.g. https://example.com => https://example.com/sitemap.xml). Try to add `/sitemap.xml` to web address and see if the page supports that. This may be better option than recursively scrapping the page, which may incur unnecesary load on the scrapped page and give the same results.
+
+
+## TODO
+- [ ] recursive scraping (`scrap` fron config file)
