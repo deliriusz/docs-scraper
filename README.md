@@ -40,4 +40,4 @@ Many documentation pages have .../sitemap.xml, that lists all the pages in docs 
 
 
 ## TODO
-- [ ] recursive scraping (`scrap` fron config file)
+- [x] recursive scraping (`scrap` from config file)

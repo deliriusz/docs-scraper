@@ -1,5 +1,4 @@
 import os
-import sys
 import asyncio
 import hashlib
 import re
@@ -22,21 +21,23 @@ class ScrapItem:
     url: str
     depth: int = 1
     allow_external_links: bool = False
+    paths_to_skip_regex: str = ""
 
 @dataclass
 class ScrapConfig:
     scrap: List[ScrapItem] = field(default_factory=list)
     
-    def add_item(self, url, depth=1, allow_external_links=False):
-        self.scrap.append(ScrapItem(url, depth, allow_external_links))
+    def add_item(self, url, depth=1, allow_external_links=False, paths_to_skip_regex = None):
+        self.scrap.append(ScrapItem(url, depth, allow_external_links, paths_to_skip_regex))
     
     def to_dict(self) -> Dict[str, List[Dict[str, Any]]]:
         return {
             "scrap": [
                 {
-                    "url": item.url,
-                    "depth": item.depth,
-                    "allow_external_links": item.allow_external_links
+                    "url": item.url or "",
+                    "depth": item.depth or 1,
+                    "allow_external_links": item.allow_external_links or False,
+                    "paths_to_skip_regex": item.paths_to_skip_regex or ""
                 } for item in self.scrap
             ]
         }
@@ -51,6 +52,40 @@ class ScrapConfig:
                 allow_external_links=item.get("allow_external_links", False)
             ))
         return config
+
+# def create_crawler_config(single_page_urls: List[str], youtube_urls: List[str]) -> Dict[str, List[str]]:
+#     """
+#     Create a JSON configuration for the crawler from lists of URLs.
+    
+#     Args:
+#         single_page_urls (list): List of single page URLs to crawl
+#         youtube_urls (list): List of YouTube video URLs to process
+        
+#     Returns:
+#         dict: Dictionary with the configuration
+#     """
+#     config = {
+#         "single_page": single_page_urls,
+#         "youtube": youtube_urls
+#     }
+    
+#     return config
+
+# def scrapped_links_to_config() -> Dict[str, List[str]]:
+#     """
+#     Takes VISITED_URLS and splits them into youtube and single page URLs.
+#     Returns a config dictionary using create_crawler_config.
+#     """
+#     youtube_urls = []
+#     single_page_urls = []
+    
+#     for url in VISITED_URLS:
+#         if "youtube.com" in url or "youtu.be" in url:
+#             youtube_urls.append(url)
+#         else:
+#             single_page_urls.append(url)
+            
+#     return create_crawler_config(single_page_urls, youtube_urls)
 
 def cleanup_url(url: str) -> str:
     """Remove fragment identifier (#) from URL."""
@@ -105,7 +140,8 @@ async def get_scrap_config_from_file(config_file: str) -> ScrapConfig:
             scrap_config.add_item(
                 url=scrap_item["url"],
                 depth=scrap_item.get("depth", 1),
-                allow_external_links=scrap_item.get("allow_external_links", False)
+                allow_external_links=scrap_item.get("allow_external_links", False),
+                paths_to_skip_regex=scrap_item.get("paths_to_skip_regex", "")
             )
             
         return scrap_config
@@ -134,6 +170,7 @@ def get_yt_transcript(url: str) -> str:
 
     if video_id is None:
         print(f"No video id found in url {url}")
+        return ""
     else:
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
@@ -171,6 +208,12 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
             print(f"Already crawled: {url}")
             return
 
+        # Skip URLs matching the regex pattern if specified
+        if scrap_item and len(scrap_item.paths_to_skip_regex) > 0:
+            if re.search(scrap_item.paths_to_skip_regex, url):
+                print(f"Skipping URL {url} due to regex pattern: `{url}`")
+                return
+
         async with semaphore:
             # Mark this URL as visited
             VISITED_URLS[url] = True
@@ -192,7 +235,7 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                         await process_and_store_document(url, result.markdown, output_dir)
 
                     if scrap_item is not None:
-                        new_scrap_item = ScrapItem(url=url, depth=scrap_item.depth - 1, allow_external_links=scrap_item.allow_external_links)
+                        new_scrap_item = ScrapItem(url=url, depth=scrap_item.depth - 1, allow_external_links=scrap_item.allow_external_links, paths_to_skip_regex=scrap_item.paths_to_skip_regex)
 
                         links_hrefs = [link['href'] for link in result.links['internal']]
 
