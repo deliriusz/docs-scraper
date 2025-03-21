@@ -211,7 +211,7 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
         # Skip URLs matching the regex pattern if specified
         if scrap_item and len(scrap_item.paths_to_skip_regex) > 0:
             if re.search(scrap_item.paths_to_skip_regex, url):
-                print(f"Skipping URL {url} due to regex pattern: `{url}`")
+                print(f"Skipping URL {url} due to regex pattern: `{scrap_item.paths_to_skip_regex}`")
                 return
 
         async with semaphore:
