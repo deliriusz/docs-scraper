@@ -51,11 +51,22 @@ class ScrapConfig:
             ))
         return config
 
-async def process_and_store_document(url: str, markdown: str, output_dir: str):
+def cleanup_url(url: str) -> str:
+    """Remove fragment identifier (#) from URL."""
+    # TODO: this won't work for YT, where video is passed as a query param
+    # url = url.split('?', 1)[0]
+    url = url.split('#', 1)[0]
+    url = re.sub(r'/$', '', url) # remove final `/` if exists
+    return url
+
+async def process_and_store_document(url: str, markdown: str, out_dir: str):
     """ Create output file name from url and save it. """
     # whole path max length in Windows/Linux/Mac seems to be 256, 120 is a good buffer,
     # giving informative names. MD5 hash is 16 bytes (~32 characters).
     max_file_name_len = 120
+
+    if markdown is None or len(markdown) == 0:
+        return
 
     possible_doc_name_from_url = re.sub(r'https?://(www\.)?', '', url) # remove http:// or https://
     possible_doc_name_from_url = re.sub(r'[^a-zA-Z0-9-]', '_', possible_doc_name_from_url) # replace non-alphanumeric characters with underscores
@@ -66,13 +77,13 @@ async def process_and_store_document(url: str, markdown: str, output_dir: str):
     else:
         doc_name = possible_doc_name_from_url
 
-    output_path = output_dir + '/' + doc_name + ".md"
+    output_path = out_dir + '/' + doc_name + ".md"
 
     # normalize any //
     output_path = re.sub(r'/+', '/', output_path)
 
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
     with open(output_path, 'w') as md_file:
         md_file.write(markdown)
@@ -143,13 +154,20 @@ def get_yt_transcript(url: str) -> str:
 
 async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, semaphore: asyncio.Semaphore, scrap_item: ScrapItem = None):
     """Crawl multiple URLs in parallel with a concurrency limit."""
+    if len(urls) == 0:
+        return
+
     if scrap_item is not None and scrap_item.depth < 1:
         return
 
     async def process_url(url: str):
+        url = cleanup_url(url)
+
         if VISITED_URLS.get(url, False):
             print(f"Already crawled: {url}")
             return
+
+        # semaphore = asyncio.Semaphore(2)
 
         async with semaphore:
             # Mark this URL as visited
@@ -166,22 +184,35 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                 )
                 if result.success:
                     print(f"Successfully crawled: {url}")
+                    await process_and_store_document(url, result.markdown, output_dir)
+
                     if scrap_item is not None:
                         new_scrap_item = ScrapItem(url=url, depth=scrap_item.depth - 1, allow_external_links=scrap_item.allow_external_links)
-                        # Extract just the href values from internal links
+
                         links_hrefs = [link['href'] for link in result.links['internal']]
 
                         if scrap_item.allow_external_links:
                             external_links_hrefs = [link['href'] for link in result.links['external']]
                             links_hrefs.extend(external_links_hrefs)
 
+                        # Gather all links into a set to remove duplicates
+                        links_set = set()
+                        
+                        # Add internal links
+                        for link in links_hrefs:
+                            # Extract just the href values from internal links and remove URL fragments
+                            link = cleanup_url(link)
+
+                            if not VISITED_URLS.get(link, False):
+                                links_set.add(link)
+                            
+                        links_hrefs = list(links_set)
+                            
                         if new_scrap_item.depth < 1:
                             new_scrap_item = None
 
                         # TODO: check if await is needed here
                         await crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item)
-
-                    await process_and_store_document(url, result.markdown, output_dir)
                 else:
                     print(f"Failed: {url} - Error: {result.error_message}")
 
@@ -216,20 +247,21 @@ async def main(config_file: str, output_dir: str):
     )
 
     # Create a semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(10)
+    semaphore = asyncio.Semaphore(200)
 
     # Create the crawler instance
     crawler = AsyncWebCrawler(config=browser_config)
     await crawler.start()
 
-    urls = await get_unique_urls_from_config(config_file)
-    scrap_config = await get_scrap_config_from_file(config_file)
+    async with semaphore:
+        urls = await get_unique_urls_from_config(config_file)
+        scrap_config = await get_scrap_config_from_file(config_file)
 
-    for scrap_item in scrap_config.scrap:
-        print(f"Processing scrap: {scrap_item.url} with depth {scrap_item.depth}")
-        await crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item)
+        for scrap_item in scrap_config.scrap:
+            print(f"Processing scrap: {scrap_item.url} with depth {scrap_item.depth}")
+            await crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item)
 
-    await crawl_parallel(urls, output_dir, crawler, semaphore)
+        await crawl_parallel(urls, output_dir, crawler, semaphore)
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:

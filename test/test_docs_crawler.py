@@ -38,15 +38,17 @@ class TestDocsCrawler(unittest.TestCase):
             
             # Check if single page was visited
             for url in conf["single_page"]:
+                url = docs_crawler.cleanup_url(url)
                 self.assertTrue(url in docs_crawler.VISITED_URLS, f"URL {url} was not visited")
             
             # Check if YouTube page was visited
             for url in conf["youtube"]:
+                url = docs_crawler.cleanup_url(url)
                 self.assertTrue(url in docs_crawler.VISITED_URLS, f"URL {url} was not visited")
             
             # Check if at least the base URL from scrap was visited
             for scrap_item in conf["scrap"]:
-                self.assertTrue(scrap_item["url"] in docs_crawler.VISITED_URLS, 
+                self.assertTrue(docs_crawler.cleanup_url(scrap_item["url"]) in docs_crawler.VISITED_URLS,
                                 f"URL {scrap_item['url']} was not visited")
         
         print(f"Test completed successfully. Generated {len(files)} output files.")
