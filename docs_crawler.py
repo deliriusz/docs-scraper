@@ -141,42 +141,52 @@ def get_yt_transcript(url: str) -> str:
             print(f"Error downloading transcript: {e}")
             return ""
 
-async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, scrap_item: ScrapItem, max_concurrent: int = 5):
+async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, semaphore: asyncio.Semaphore, scrap_item: ScrapItem = None):
     """Crawl multiple URLs in parallel with a concurrency limit."""
+    if scrap_item is not None and scrap_item.depth < 1:
+        return
 
-    try:
-        # Create a semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(max_concurrent)
+    async def process_url(url: str):
+        if VISITED_URLS.get(url, False):
+            print(f"Already crawled: {url}")
+            return
 
-        async def process_url(url: str):
-            if VISITED_URLS.get(url, False):
-                print(f"Already crawled: {url}")
-                return
-            # TODO: move semaphore outside and move `with` outside of the function to have 1 semaphore for recursive calls
-            async with semaphore:
-                # Mark this URL as visited
-                VISITED_URLS[url] = True
-                
-                if "youtube.com" in url or "youtu.be" in url:
-                    result = get_yt_transcript(url)
-                    await process_and_store_document(url, result, output_dir)
+        async with semaphore:
+            # Mark this URL as visited
+            VISITED_URLS[url] = True
+
+            if "youtube.com" in url or "youtu.be" in url:
+                result = get_yt_transcript(url)
+                await process_and_store_document(url, result, output_dir)
+            else:
+                result = await crawler.arun(
+                    url=url,
+                    config=crawl_config,
+                    session_id="session1"
+                )
+                if result.success:
+                    print(f"Successfully crawled: {url}")
+                    if scrap_item is not None:
+                        new_scrap_item = ScrapItem(url=url, depth=scrap_item.depth - 1, allow_external_links=scrap_item.allow_external_links)
+                        # Extract just the href values from internal links
+                        links_hrefs = [link['href'] for link in result.links['internal']]
+
+                        if scrap_item.allow_external_links:
+                            external_links_hrefs = [link['href'] for link in result.links['external']]
+                            links_hrefs.extend(external_links_hrefs)
+
+                        if new_scrap_item.depth < 1:
+                            new_scrap_item = None
+
+                        # TODO: check if await is needed here
+                        await crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item)
+
+                    await process_and_store_document(url, result.markdown, output_dir)
                 else:
-                    result = await crawler.arun(
-                        url=url,
-                        config=crawl_config,
-                        session_id="session1"
-                    )
-                    if result.success:
-                        print(f"Successfully crawled: {url}")
-                        # await process_and_store_document(url, result.markdown_v2.raw_markdown)
-                        await process_and_store_document(url, result.markdown, output_dir)
-                    else:
-                        print(f"Failed: {url} - Error: {result.error_message}")
+                    print(f"Failed: {url} - Error: {result.error_message}")
 
-        # Process all URLs in parallel with limited concurrency
-        await asyncio.gather(*[process_url(url) for url in urls])
-    finally:
-        await crawler.close()
+    # Process all URLs in parallel with limited concurrency
+    await asyncio.gather(*[process_url(url) for url in urls])
 
 def get_urls_from_sitemap(url: str) -> List[str]:
     """Get URLs from docs sitemap."""
@@ -205,6 +215,9 @@ async def main(config_file: str, output_dir: str):
         extra_args=["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox"],
     )
 
+    # Create a semaphore to limit concurrency
+    semaphore = asyncio.Semaphore(10)
+
     # Create the crawler instance
     crawler = AsyncWebCrawler(config=browser_config)
     await crawler.start()
@@ -212,7 +225,11 @@ async def main(config_file: str, output_dir: str):
     urls = await get_unique_urls_from_config(config_file)
     scrap_config = await get_scrap_config_from_file(config_file)
 
-    await crawl_parallel(urls, output_dir, crawler, 10)
+    for scrap_item in scrap_config.scrap:
+        print(f"Processing scrap: {scrap_item.url} with depth {scrap_item.depth}")
+        await crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item)
+
+    await crawl_parallel(urls, output_dir, crawler, semaphore)
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
