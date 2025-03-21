@@ -10,7 +10,7 @@
       "url": "https://docs.soliditylang.org/en/latest",
       "depth": 2,
       "allow_external_links": false,
-      "paths_to_skip_regex": "ang.org\/(?!en)[a-z]{2}(-[a-z]{1,2})?\/"
+      "paths_to_skip_regex": "ang.org\/(?!en)[a-z]{2}(-[a-z]{1,2})?\/|forum.soliditylang.org|underhanded.soliditylang.org"
     }
   ],
   "youtube": [

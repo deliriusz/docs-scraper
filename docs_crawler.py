@@ -296,7 +296,7 @@ def get_urls_from_sitemap(url: str) -> List[str]:
         return []
 
 
-async def main(config_file: str, output_dir: str, dry_run: bool = False):
+async def main(config_file: str, output_dir: str, dry_run: bool = False, threads: int = 20):
     browser_config = BrowserConfig(
         headless=True,
         verbose=False,
@@ -305,7 +305,7 @@ async def main(config_file: str, output_dir: str, dry_run: bool = False):
     )
 
     # Create a semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(10)
+    semaphore = asyncio.Semaphore(threads)
 
     # Create the crawler instance
     crawler = AsyncWebCrawler(config=browser_config)
@@ -339,7 +339,7 @@ async def main(config_file: str, output_dir: str, dry_run: bool = False):
         
     finally:
         # Ensure crawler is properly closed
-        # await crawler.stop()
+        await crawler.close()
         print('done')
 
 if __name__ == "__main__":
@@ -347,7 +347,8 @@ if __name__ == "__main__":
     parser.add_argument("config_file", help="Path to JSON configuration file")
     parser.add_argument("output_dir", help="Directory to store crawled files")
     parser.add_argument("--dry-run", action="store_true", help="Print URLs only, don't save files")
-    
+    parser.add_argument("--threads", type=int, default=20, help="Number of concurrent threads (default: 20)")
+
     args = parser.parse_args()
     
-    asyncio.run(main(args.config_file, args.output_dir, args.dry_run))
+    asyncio.run(main(args.config_file, args.output_dir, args.dry_run, args.threads))
