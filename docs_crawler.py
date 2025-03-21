@@ -167,8 +167,7 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
             print(f"Already crawled: {url}")
             return
 
-        # semaphore = asyncio.Semaphore(2)
-
+        # Use the passed semaphore instead of creating a new one
         async with semaphore:
             # Mark this URL as visited
             VISITED_URLS[url] = True
@@ -211,13 +210,14 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                         if new_scrap_item.depth < 1:
                             new_scrap_item = None
 
-                        # TODO: check if await is needed here
-                        await crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item)
+                        # Create tasks but don't await them here - avoid nesting crawl calls
+                        asyncio.create_task(crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item))
                 else:
                     print(f"Failed: {url} - Error: {result.error_message}")
 
-    # Process all URLs in parallel with limited concurrency
-    await asyncio.gather(*[process_url(url) for url in urls])
+    # Create tasks for each URL but limit their execution with the semaphore
+    tasks = [asyncio.create_task(process_url(url)) for url in urls]
+    await asyncio.gather(*tasks)
 
 def get_urls_from_sitemap(url: str) -> List[str]:
     """Get URLs from docs sitemap."""
@@ -247,21 +247,33 @@ async def main(config_file: str, output_dir: str):
     )
 
     # Create a semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(200)
+    semaphore = asyncio.Semaphore(10)
 
     # Create the crawler instance
     crawler = AsyncWebCrawler(config=browser_config)
     await crawler.start()
 
-    async with semaphore:
+    try:
         urls = await get_unique_urls_from_config(config_file)
         scrap_config = await get_scrap_config_from_file(config_file)
 
+        tasks = []
+        # Process scrap items
         for scrap_item in scrap_config.scrap:
             print(f"Processing scrap: {scrap_item.url} with depth {scrap_item.depth}")
-            await crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item)
+            tasks.append(crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item))
 
-        await crawl_parallel(urls, output_dir, crawler, semaphore)
+        # Process single URLs
+        tasks.append(crawl_parallel(urls, output_dir, crawler, semaphore))
+
+        # tasks.append(asyncio.sleep(15))
+        
+        # Wait for all crawling to complete
+        await asyncio.gather(*tasks)
+    finally:
+        # Ensure crawler is properly closed
+        # await crawler.close()
+        print(f"DONE")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
