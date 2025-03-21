@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+import argparse
 
 # Global hashmap to track visited URLs
 VISITED_URLS = {}
@@ -152,7 +153,7 @@ def get_yt_transcript(url: str) -> str:
             print(f"Error downloading transcript: {e}")
             return ""
 
-async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, semaphore: asyncio.Semaphore, scrap_item: ScrapItem = None):
+async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, semaphore: asyncio.Semaphore, scrap_item: ScrapItem = None, dry_run: bool = False):
     """Crawl multiple URLs in parallel with a concurrency limit."""
     if len(urls) == 0:
         return
@@ -175,8 +176,9 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
             VISITED_URLS[url] = True
 
             if "youtube.com" in url or "youtu.be" in url:
-                result = get_yt_transcript(url)
-                await process_and_store_document(url, result, output_dir)
+                if not dry_run:
+                    result = get_yt_transcript(url)
+                    await process_and_store_document(url, result, output_dir)
             else:
                 result = await crawler.arun(
                     url=url,
@@ -185,7 +187,9 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                 )
                 if result.success:
                     print(f"Successfully crawled: {url}")
-                    await process_and_store_document(url, result.markdown, output_dir)
+                    
+                    if not dry_run:
+                        await process_and_store_document(url, result.markdown, output_dir)
 
                     if scrap_item is not None:
                         new_scrap_item = ScrapItem(url=url, depth=scrap_item.depth - 1, allow_external_links=scrap_item.allow_external_links)
@@ -211,7 +215,7 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                         # Create a new task for child URLs but track it in our task set
                         if links_hrefs:
                             child_task = asyncio.create_task(
-                                crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item)
+                                crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item, dry_run)
                             )
                             # Add task to set so we can wait for it
                             child_tasks.add(child_task)
@@ -249,7 +253,7 @@ def get_urls_from_sitemap(url: str) -> List[str]:
         return []
 
 
-async def main(config_file: str, output_dir: str):
+async def main(config_file: str, output_dir: str, dry_run: bool = False):
     browser_config = BrowserConfig(
         headless=True,
         verbose=False,
@@ -276,14 +280,14 @@ async def main(config_file: str, output_dir: str):
         for scrap_item in scrap_config.scrap:
             print(f"Processing scrap: {scrap_item.url} with depth {scrap_item.depth}")
             task = asyncio.create_task(
-                crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item)
+                crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item, dry_run)
             )
             main_tasks.append(task)
 
         # Process single URLs
         if urls:
             task = asyncio.create_task(
-                crawl_parallel(urls, output_dir, crawler, semaphore)
+                crawl_parallel(urls, output_dir, crawler, semaphore, None, dry_run)
             )
             main_tasks.append(task)
         
@@ -296,10 +300,11 @@ async def main(config_file: str, output_dir: str):
         print('done')
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print(f"Usage {sys.argv[0]} <json-config-file-path> <output-dir>")
-        exit(1)
-
-    config_file = sys.argv[1]
-    output_dir = sys.argv[2]
-    asyncio.run(main(config_file, output_dir))
+    parser = argparse.ArgumentParser(description="Web crawler for documentation")
+    parser.add_argument("config_file", help="Path to JSON configuration file")
+    parser.add_argument("output_dir", help="Directory to store crawled files")
+    parser.add_argument("--dry-run", action="store_true", help="Print URLs only, don't save files")
+    
+    args = parser.parse_args()
+    
+    asyncio.run(main(args.config_file, args.output_dir, args.dry_run))
