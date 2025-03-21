@@ -10,6 +10,11 @@
       "url": "https://aave.com/docs/developers/aave-v3",
       "depth": 1,
       "allow_external_links": false
+    },
+    {
+      "url": "https://docs.soliditylang.org/en/latest",
+      "depth": 3,
+      "allow_external_links": true
     }
   ],
   "youtube": [

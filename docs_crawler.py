@@ -8,8 +8,48 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 import requests
 from xml.etree import ElementTree
-from typing import List
+from typing import List, Dict, Any
+from dataclasses import dataclass, field
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+
+# Global hashmap to track visited URLs
+VISITED_URLS = {}
+crawl_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
+
+@dataclass
+class ScrapItem:
+    url: str
+    depth: int = 1
+    allow_external_links: bool = False
+
+@dataclass
+class ScrapConfig:
+    scrap: List[ScrapItem] = field(default_factory=list)
+    
+    def add_item(self, url, depth=1, allow_external_links=False):
+        self.scrap.append(ScrapItem(url, depth, allow_external_links))
+    
+    def to_dict(self) -> Dict[str, List[Dict[str, Any]]]:
+        return {
+            "scrap": [
+                {
+                    "url": item.url,
+                    "depth": item.depth,
+                    "allow_external_links": item.allow_external_links
+                } for item in self.scrap
+            ]
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ScrapConfig':
+        config = cls()
+        for item in data.get("scrap", []):
+            config.scrap.append(ScrapItem(
+                url=item["url"],
+                depth=item.get("depth", 1),
+                allow_external_links=item.get("allow_external_links", False)
+            ))
+        return config
 
 async def process_and_store_document(url: str, markdown: str, output_dir: str):
     """ Create output file name from url and save it. """
@@ -17,10 +57,9 @@ async def process_and_store_document(url: str, markdown: str, output_dir: str):
     # giving informative names. MD5 hash is 16 bytes (~32 characters).
     max_file_name_len = 120
 
-    possible_doc_name_from_url = re.sub(r'https?://(www\.)?', '', url)
-    possible_doc_name_from_url = re.sub(r'[^a-zA-Z0-9-]', '_', possible_doc_name_from_url)
-
-    doc_name = ""
+    possible_doc_name_from_url = re.sub(r'https?://(www\.)?', '', url) # remove http:// or https://
+    possible_doc_name_from_url = re.sub(r'[^a-zA-Z0-9-]', '_', possible_doc_name_from_url) # replace non-alphanumeric characters with underscores
+    possible_doc_name_from_url = re.sub(r'_+', '_', possible_doc_name_from_url) # replace multiple underscores with a single underscore
 
     if len(possible_doc_name_from_url) > max_file_name_len:
         doc_name = possible_doc_name_from_url[:max_file_name_len] + "_" + hashlib.md5(url.encode()).hexdigest()
@@ -38,6 +77,26 @@ async def process_and_store_document(url: str, markdown: str, output_dir: str):
     with open(output_path, 'w') as md_file:
         md_file.write(markdown)
 
+async def get_scrap_config_from_file(config_file: str) -> ScrapConfig:
+    """
+    Load just the scrap configuration items from a config file.
+    Returns a ScrapConfig object populated with the scrap items.
+    """
+    with open(config_file) as json_data:
+        conf = json.load(json_data)
+        
+        # Create a new ScrapConfig object
+        scrap_config = ScrapConfig()
+        
+        # Process each scrap item from the config
+        for scrap_item in conf.get("scrap", []):
+            scrap_config.add_item(
+                url=scrap_item["url"],
+                depth=scrap_item.get("depth", 1),
+                allow_external_links=scrap_item.get("allow_external_links", False)
+            )
+            
+        return scrap_config
 
 async def get_unique_urls_from_config(config_file: str) -> List[str]:
     """ Bundle urls from single pages, sitemap files and recursive crawling pages. """
@@ -51,10 +110,6 @@ async def get_unique_urls_from_config(config_file: str) -> List[str]:
 
         for sitemap_url in conf["sitemap"]:
             output_urls.update(get_urls_from_sitemap(sitemap_url))
-
-        # TODO: add scraping options, possibly change return type to list of objects
-        for scrap_url in conf["scrap"]:
-            output_urls.add(scrap_url["url"])
 
         # YT don't need crawling, just yt_dlp to get transcript
         return list(output_urls)
@@ -86,16 +141,22 @@ def get_yt_transcript(url: str) -> str:
             print(f"Error downloading transcript: {e}")
             return ""
 
-async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, max_concurrent: int = 5):
+async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCrawler, scrap_item: ScrapItem, max_concurrent: int = 5):
     """Crawl multiple URLs in parallel with a concurrency limit."""
-    crawl_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
 
     try:
         # Create a semaphore to limit concurrency
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def process_url(url: str):
+            if VISITED_URLS.get(url, False):
+                print(f"Already crawled: {url}")
+                return
+            # TODO: move semaphore outside and move `with` outside of the function to have 1 semaphore for recursive calls
             async with semaphore:
+                # Mark this URL as visited
+                VISITED_URLS[url] = True
+                
                 if "youtube.com" in url or "youtu.be" in url:
                     result = get_yt_transcript(url)
                     await process_and_store_document(url, result, output_dir)
@@ -149,6 +210,7 @@ async def main(config_file: str, output_dir: str):
     await crawler.start()
 
     urls = await get_unique_urls_from_config(config_file)
+    scrap_config = await get_scrap_config_from_file(config_file)
 
     await crawl_parallel(urls, output_dir, crawler, 10)
 
