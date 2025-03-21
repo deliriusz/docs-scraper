@@ -160,6 +160,9 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
     if scrap_item is not None and scrap_item.depth < 1:
         return
 
+    # Keep track of all child tasks created
+    child_tasks = set()
+    
     async def process_url(url: str):
         url = cleanup_url(url)
 
@@ -167,7 +170,6 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
             print(f"Already crawled: {url}")
             return
 
-        # Use the passed semaphore instead of creating a new one
         async with semaphore:
             # Mark this URL as visited
             VISITED_URLS[url] = True
@@ -197,27 +199,36 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                         # Gather all links into a set to remove duplicates
                         links_set = set()
                         
-                        # Add internal links
                         for link in links_hrefs:
-                            # Extract just the href values from internal links and remove URL fragments
                             link = cleanup_url(link)
-
                             if not VISITED_URLS.get(link, False):
                                 links_set.add(link)
                             
                         links_hrefs = list(links_set)
-                            
+
                         if new_scrap_item.depth < 1:
                             new_scrap_item = None
-
-                        # Create tasks but don't await them here - avoid nesting crawl calls
-                        asyncio.create_task(crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item))
+                        # Create a new task for child URLs but track it in our task set
+                        if links_hrefs:
+                            child_task = asyncio.create_task(
+                                crawl_parallel(links_hrefs, output_dir, crawler, semaphore, new_scrap_item)
+                            )
+                            # Add task to set so we can wait for it
+                            child_tasks.add(child_task)
+                            # Remove task from set when it completes
+                            child_task.add_done_callback(child_tasks.discard)
                 else:
                     print(f"Failed: {url} - Error: {result.error_message}")
 
-    # Create tasks for each URL but limit their execution with the semaphore
-    tasks = [asyncio.create_task(process_url(url)) for url in urls]
-    await asyncio.gather(*tasks)
+    # Create tasks for each URL
+    url_tasks = [asyncio.create_task(process_url(url)) for url in urls]
+    
+    # Wait for all immediate URL tasks to complete
+    await asyncio.gather(*url_tasks)
+    
+    # Then wait for all child tasks to complete
+    if child_tasks:
+        await asyncio.gather(*child_tasks)
 
 def get_urls_from_sitemap(url: str) -> List[str]:
     """Get URLs from docs sitemap."""
@@ -251,29 +262,38 @@ async def main(config_file: str, output_dir: str):
 
     # Create the crawler instance
     crawler = AsyncWebCrawler(config=browser_config)
-    await crawler.start()
-
+    
     try:
+        await crawler.start()
+
         urls = await get_unique_urls_from_config(config_file)
         scrap_config = await get_scrap_config_from_file(config_file)
 
-        tasks = []
+        # Create main tasks list to track all top-level crawl operations
+        main_tasks = []
+        
         # Process scrap items
         for scrap_item in scrap_config.scrap:
             print(f"Processing scrap: {scrap_item.url} with depth {scrap_item.depth}")
-            tasks.append(crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item))
+            task = asyncio.create_task(
+                crawl_parallel([scrap_item.url], output_dir, crawler, semaphore, scrap_item)
+            )
+            main_tasks.append(task)
 
         # Process single URLs
-        tasks.append(crawl_parallel(urls, output_dir, crawler, semaphore))
-
-        # tasks.append(asyncio.sleep(15))
+        if urls:
+            task = asyncio.create_task(
+                crawl_parallel(urls, output_dir, crawler, semaphore)
+            )
+            main_tasks.append(task)
         
-        # Wait for all crawling to complete
-        await asyncio.gather(*tasks)
+        # Wait for all main crawling tasks to complete
+        await asyncio.gather(*main_tasks)
+        
     finally:
         # Ensure crawler is properly closed
-        # await crawler.close()
-        print(f"DONE")
+        # await crawler.stop()
+        print('done')
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
