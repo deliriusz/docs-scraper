@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import re
 import json
+import urllib.parse
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 import requests
@@ -100,12 +101,21 @@ async def process_and_store_document(url: str, markdown: str, out_dir: str):
     # whole path max length in Windows/Linux/Mac seems to be 256, 120 is a good buffer,
     # giving informative names. MD5 hash is 16 bytes (~32 characters).
     max_file_name_len = 120
+    name_substitution_pattern = r'[^a-zA-Z0-9-]'
 
     if markdown is None or len(markdown) == 0:
         return
 
+    # Parse URL to get hostname
+    parsed_url = urllib.parse.urlparse(url)
+    hostname = parsed_url.hostname.replace('www.', '')  # Remove www. if present
+    hostname = re.sub(name_substitution_pattern, '_', hostname)
+
+    # Create hostname subfolder path
+    host_dir = os.path.join(out_dir, hostname)
+
     possible_doc_name_from_url = re.sub(r'https?://(www\.)?', '', url) # remove http:// or https://
-    possible_doc_name_from_url = re.sub(r'[^a-zA-Z0-9-]', '_', possible_doc_name_from_url) # replace non-alphanumeric characters with underscores
+    possible_doc_name_from_url = re.sub(name_substitution_pattern, '_', possible_doc_name_from_url) # replace non-alphanumeric characters with underscores
     possible_doc_name_from_url = re.sub(r'_+', '_', possible_doc_name_from_url) # replace multiple underscores with a single underscore
 
     if len(possible_doc_name_from_url) > max_file_name_len:
@@ -113,13 +123,13 @@ async def process_and_store_document(url: str, markdown: str, out_dir: str):
     else:
         doc_name = possible_doc_name_from_url
 
-    output_path = out_dir + '/' + doc_name + ".md"
+    output_path = os.path.join(host_dir, doc_name + ".md")
 
     # normalize any //
     output_path = re.sub(r'/+', '/', output_path)
 
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
+    # Create both the main output dir and hostname subfolder if they don't exist
+    os.makedirs(host_dir, exist_ok=True)
 
     with open(output_path, 'w') as md_file:
         md_file.write(markdown)
@@ -223,6 +233,7 @@ async def crawl_parallel(urls: List[str], output_dir: str, crawler: AsyncWebCraw
                     result = get_yt_transcript(url)
                     await process_and_store_document(url, result, output_dir)
             else:
+                # TODO: change to arun_many
                 result = await crawler.arun(
                     url=url,
                     config=crawl_config,
