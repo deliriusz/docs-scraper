@@ -15,14 +15,7 @@
       "url": "https://docs-one.zerolend.xyz/sitemap.xml",
       "isSitemap": true,
       "shouldScrap": false,
-      "selectors": ["article", "main", ".content"],
-      "schema": {
-        "type": "jsoncss",
-        "definition": {
-          "title": "h1::text",
-          "sections": "h2::text"
-        }
-      }
+      "selectors": ["article", "main", ".content"]
     },
     {
       "url": "https://www.dailywarden.com/",
