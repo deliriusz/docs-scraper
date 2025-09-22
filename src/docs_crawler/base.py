@@ -95,8 +95,7 @@ class C4ABase:
         return CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
             scraping_strategy=scraping_strategy,
-            css_selector=", ".join(item.selectors) if item.selectors else None,
-            # Add other configuration as needed
+            target_elements=item.selectors if item.selectors else None,
         )
     
     def build_filter_chain(self, item: Item) -> Optional[FilterChain]:

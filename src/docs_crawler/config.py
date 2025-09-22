@@ -36,11 +36,6 @@ class Defaults(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-class Schema(BaseModel):
-    """Schema configuration for structured extraction."""
-    type: str = "jsoncss"
-    definition: Union[Dict[str, Any], str] = Field(default_factory=dict)  # JSON dict or file path
-
 
 class Item(BaseModel):
     """Configuration for a single crawl item."""
@@ -48,7 +43,6 @@ class Item(BaseModel):
     is_sitemap: bool = Field(False, alias="isSitemap")
     should_scrap: bool = Field(False, alias="shouldScrap")
     selectors: List[str] = Field(default_factory=list)
-    schema: Optional[Schema] = None
     include_external: bool = Field(False, alias="includeExternal")
     include_subdomains: bool = Field(True, alias="includeSubdomains")
     max_depth: int = Field(2, alias="maxDepth")
@@ -57,7 +51,6 @@ class Item(BaseModel):
     output_format: Optional[str] = Field(None, alias="outputFormat")  # Override default
 
     model_config = ConfigDict(populate_by_name=True)
-
 
 class Config(BaseModel):
     """Main configuration class."""
@@ -158,7 +151,6 @@ def expand_sitemaps(items: List[Item]) -> List[Item]:
                     is_sitemap=False,
                     should_scrap=False,
                     selectors=item.selectors.copy(),
-                    schema=item.schema,
                     include_external=item.include_external,
                     include_subdomains=item.include_subdomains,
                     max_depth=item.max_depth,
