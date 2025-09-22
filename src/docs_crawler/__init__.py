@@ -12,15 +12,15 @@ for documentation sites with support for:
 """
 
 __version__ = "2.0.0"
-__author__ = "Deliriusz"
+__author__ = "deliriusz"
 
 from .config import load_config, Config, Item, Defaults
 from .base import C4ABase
 from .batch_runner import BatchRunner
 from .deepcrawl_runner import DeepCrawlRunner
-from .extraction import JSONCSSExtractor
-from .persistence import PersistenceStrategy, FolderPerDomainStrategy, FilePerDomainStrategy
+from .persistence import PersistenceStrategy, FolderPerDomainStrategy, FilePerDomainStrategy, create_persistence_strategy, SavedFileInfo, SavedDomainFileInfo
 from .youtube import YouTubeTranscriptExtractor
+from .utils import cleanup_url, VISITED_URLS
 from .cli import main
 
 __all__ = [
@@ -31,10 +31,14 @@ __all__ = [
     "C4ABase",
     "BatchRunner",
     "DeepCrawlRunner",
-    "JSONCSSExtractor",
     "PersistenceStrategy",
     "FolderPerDomainStrategy", 
     "FilePerDomainStrategy",
+    "create_persistence_strategy",
+    "SavedFileInfo",
+    "SavedDomainFileInfo",
     "YouTubeTranscriptExtractor",
+    "cleanup_url",
+    "VISITED_URLS",
     "main",
 ]

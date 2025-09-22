@@ -1,0 +1,53 @@
+---
+description: how to use uv
+globs: *.py
+alwaysApply: true
+---
+
+# uv Python Package Management and Execution Rules
+
+- You are an expert in Python.
+- Always use uv for managing Python dependencies and running code.
+- Do not use pip, pip-tools, poetry, or conda directly for dependency management.
+- Python dependencies must be installed, synchronized, and locked using uv commands.
+
+## Package Management Commands
+
+- Add dependencies: `uv add <package>`
+- Remove dependencies: `uv remove <package>`
+- Sync dependencies: `uv sync`
+
+## Running Python Code
+
+- Run Python scripts: `uv run <script-name>.py`
+- Run Python tools (e.g. linters, formatters): `uv run <tool>`
+- Launch Python REPL: `uv run python`
+- Use `uv run` instead of `python` to respect virtual environments.
+- No need to run pip installs manually; uv handles installing dependencies automatically.
+
+## Running Tests
+
+- Use `uv run pytest` to run tests with Pytest.
+- For test discovery and coverage, run `uv run pytest --cov`.
+- Use pytest config files as usual (`pytest.ini`, `tox.ini`, or `setup.cfg`).
+- You can also run other test runners through uv, e.g., `uv run unittest` or `uv run tox`.
+- Ensure test dependencies like `pytest` are added and synced through uv (`uv add pytest`).
+
+## Script Guidelines
+
+- Write scripts prefixed with:
+#!/usr/bin/env -S uv run --script
+/// script
+dependencies = [
+"dependency1",
+"dependency2",
+]
+///
+
+- Run these scripts with `uv run script-name.py`.
+
+## Notes
+
+- Check `uv --help` for more options.
+- If you hit errors, verify your uv usage before switching to pip or python commands.
+- Commit your `uv.mdc` or equivalent lock files to version control for consistency.

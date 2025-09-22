@@ -1,0 +1,49 @@
+{
+  "persistenceStrategy": "folder_per_domain",
+  "defaults": {
+    "threads": 20,
+    "rateLimiter": {
+      "base_delay": [2.0, 4.0],
+      "max_delay": 30.0,
+      "max_retries": 5,
+      "rate_limit_codes": [429, 503]
+    },
+    "outputFormat": "markdown"
+  },
+  "items": [
+    {
+      "url": "https://docs-one.zerolend.xyz/sitemap.xml",
+      "isSitemap": true,
+      "shouldScrap": false,
+      "selectors": ["article", "main", ".content"],
+      "schema": {
+        "type": "jsoncss",
+        "definition": {
+          "title": "h1::text",
+          "sections": "h2::text"
+        }
+      }
+    },
+    {
+      "url": "https://www.dailywarden.com/",
+      "isSitemap": false,
+      "shouldScrap": false,
+      "selectors": ["#main-content"]
+    },
+    {
+      "url": "https://docs.soliditylang.org/en/latest",
+      "isSitemap": false,
+      "shouldScrap": true,
+      "max_depth": 2,
+      "max_pages": 50,
+      "include_external": false,
+      "include_subdomains": true,
+      "paths_to_skip_regex": "ang.org\\/(?!en)[a-z]{2}(-[a-z]{1,2})?\\/|forum.soliditylang.org",
+      "selectors": ["#main-content", "article"],
+      "outputFormat": "both"
+    }
+  ],
+  "youtube": [
+    "https://www.youtube.com/watch?v=1jkQn_dpROI"
+  ]
+}

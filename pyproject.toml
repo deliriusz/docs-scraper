@@ -9,10 +9,21 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "typing-extensions>=4.0.0",
+    "pydantic>=2.11.0",
+    "crawl4ai>=0.7.4",
+    "requests>=2.32.3",
+    "youtube-transcript-api>=0.6.3",
 ]
 
 [project.scripts]
 docs-crawler = "docs_crawler:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,3 +31,18 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/docs_crawler"]
+
+[tool.pytest.ini_options]
+addopts = "--maxfail=1 --cov=docs_crawler --cov-report=term-missing"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+]

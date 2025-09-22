@@ -8,23 +8,22 @@ References:
 
 ### Goals
 - Replace custom recursion with Crawl4AI deep crawling using BestFirstCrawlingStrategy.
-- Support per-item content selection (selectors array) and optional structured extraction via JSON/CSS schema.
+- Support per-item content selection (selectors array) for markdown content extraction.
 - Unify configuration into a single items list with flags `shouldScrap` and `isSitemap`.
 - Use `arun_many()` with rate limiting for flat URL batches (single pages and sitemap-expanded URLs).
 - Add pluggable persistence: `folder_per_domain` and `file_per_domain` (aggregation at end).
-- Keep YouTube transcript extraction as a separate component.
+- Integrate YouTube transcript extraction with persistence strategies.
 
 ### Project Structure
 - pyproject.toml (package metadata and dependencies)
-- docs_crawler/
+- src/docs_crawler/
   - __init__.py
-  - config.py (load/validate/expand config; sitemap expansion)
-  - base.py (shared Crawl4AI setup: BrowserConfig, CrawlerRunConfig, RateLimiter; selection/extraction wiring)
+  - config.py (load/validate/expand config; sitemap expansion; Pydantic models)
+  - base.py (shared Crawl4AI setup: BrowserConfig, CrawlerRunConfig, RateLimiter; selection wiring)
   - batch_runner.py (arun_many for flat URL lists with rate limiting)
   - deepcrawl_runner.py (BestFirstCrawlingStrategy + filters + scorers; streaming)
-  - extraction.py (JSON/CSS extraction handling; result shaping)
   - persistence.py (writers for folder_per_domain and file_per_domain aggregation)
-  - youtube.py (YouTubeTranscriptApi wrapper)
+  - youtube.py (YouTubeTranscriptApi wrapper with persistence integration)
   - cli.py (entry points and orchestration)
   - utils.py (URL cleanup, dedup, domain utils, hashing)
 
@@ -32,24 +31,21 @@ References:
 Top-level keys:
 - persistenceStrategy: "folder_per_domain" | "file_per_domain"
 - defaults: optional defaults applied to items
-  - threads, rateLimiter, outputFormat ("markdown"|"json"|"both")
+  - threads, rateLimiter, outputFormat ("markdown")
 - items: array of item objects
 - youtube: array of YouTube URLs
 
 Item object:
 - url: string (page URL or sitemap URL)
-- isSitemap: boolean (if true, expand into URLs; item-level selectors/schema apply to expanded pages)
+- isSitemap: boolean (if true, expand into URLs; item-level selectors apply to expanded pages)
 - shouldScrap: boolean (if true, run deep crawling starting from url)
 - selectors: array of CSS selectors (applied via scraping strategy)
-- schema: optional object for structured extraction
-  - type: "jsoncss"
-  - definition: JSON with CSS selectors map, or schema_file path
 - include_external: boolean (for deep crawl)
 - include_subdomains: boolean (optional; default true)
 - max_depth: int (deep crawl)
 - max_pages: int (deep crawl cap)
 - paths_to_skip_regex: string regex to exclude URLs
-- outputFormat: optional override ("markdown"|"json"|"both")
+- outputFormat: optional override ("markdown")
 
 Rate Limiter (defaults.rateLimiter):
 ```python
@@ -72,18 +68,17 @@ rate_limiter = RateLimiter(
   - build_best_first(item) – BestFirstCrawlingStrategy with include_external, max_depth, max_pages, filter_chain (no scoring)
 
 2) config.py
-- Dataclasses for Defaults, Item, RootConfig.
-- Loading/validation with schema checks; merge defaults into items.
+- Pydantic models for Defaults, Item, Config with camelCase aliases.
+- Loading/validation with Pydantic; merge defaults into items.
 - Sitemap expansion:
-  - For each item with isSitemap true and shouldScrap false: fetch and expand to flat URL list; keep item properties (selectors/schema/outputFormat) to apply to each expanded URL.
+  - For each item with isSitemap true and shouldScrap false: fetch and expand to flat URL list; keep item properties (selectors/outputFormat) to apply to each expanded URL.
 - URL normalization: strip fragments, optionally strip tracking params; dedup globally.
 
 3) batch_runner.py
-- Input: flat list of (url, item_cfg) pairs.
+- Input: flat list of Item objects.
 - Use crawler.arun_many(urls, config=..., concurrency=threads, rate_limiter=RateLimiter).
 - For each result:
-  - Persist markdown (respecting selectors via scraping strategy) unless outputFormat excludes it.
-  - If schema present, run extraction to produce JSON alongside.
+  - Persist markdown (respecting selectors via scraping strategy).
 - Error handling with retries delegated to RateLimiter; collect per-URL status.
 
 4) deepcrawl_runner.py
@@ -91,45 +86,42 @@ rate_limiter = RateLimiter(
   - Configure BestFirstCrawlingStrategy per docs: `https://docs.crawl4ai.com/core/deep-crawling/`.
   - Enable stream=True; iterate async results as they arrive.
   - Apply item selectors via scraping strategy; persist each page.
-  - If schema present, run structured extraction per page.
   - Respect include_external, include_subdomains, max_depth, max_pages, and paths_to_skip_regex via filter chain.
   - Track metadata: depth, score, url; accumulate stats.
 
-5) extraction.py
-- JSONCSS extraction dispatcher when item.schema.type == "jsoncss".
-- Accepts page HTML/DOM context from Crawl4AI result and applies schema definition to produce JSON.
-- Output file naming coordinated with persistence module.
-
-6) persistence.py
+5) persistence.py
 - folder_per_domain:
   - Current behavior: write one file per URL under domain dir; filenames deduped and normalized.
 - file_per_domain:
   - Keep in-memory append buffers per domain (with flush thresholds to avoid OOM).
   - Write interim fragments and merge at end into a single ordered file per domain.
-  - For JSON extraction, aggregate as an array per domain or NDJSON; configurable in future.
+- Both strategies track saved files for manifest generation.
 
-7) youtube.py
+6) youtube.py
 - Use YouTubeTranscriptApi to fetch transcripts; persist using persistence strategies (domain `youtube.com`).
-- Not affected by selectors/schema.
+- Integrates with persistence layer for consistent file handling.
+- Formats transcripts as markdown with video metadata.
 
-8) cli.py
-- Command: `docs-crawler run <config.json> <out_dir> [--threads N] [--stream] [--dry-run]`
+7) cli.py
+- Command: `docs-crawler run <config.json> <out_dir> [--dry-run] [--verbose]`
 - Steps:
   - Load config; expand sitemaps; split items into: deep items (shouldScrap) and flat items (others).
   - With C4ABase context, run BatchRunner for flat set (arun_many with rate limiting) and DeepCrawler for deep items.
-  - After runs, finalize persistence (merge per-domain files when needed) and write a run manifest (stats, outputs).
+  - Process YouTube URLs with persistence integration.
+  - After runs, finalize persistence (merge per-domain files when needed).
 
 ### Processing Flow
 1) Load docs.json; validate; merge defaults into items.
 2) Expand sitemap items where applicable into flat URLs; attach item-derived settings to each URL.
 3) Build flat fetch set (single pages + sitemap-expanded, not deep) and deep set (shouldScrap).
 4) Start AsyncWebCrawler once (shared across runs) via base.C4ABase.
-5) Run BatchRunner.arun_many on flat set with provided RateLimiter and threads.
-6) Run DeepCrawler on each deep item using BestFirstCrawlingStrategy with stream=True.
-7) For every page result:
+5) Process YouTube URLs with persistence integration.
+6) Run BatchRunner.arun_many on flat set with provided RateLimiter and threads.
+7) Run DeepCrawler on each deep item using BestFirstCrawlingStrategy with stream=True.
+8) For every page result:
    - Apply selection (scraping strategy configured with item.selectors).
-   - Persist markdown/JSON depending on outputFormat and persistenceStrategy.
-8) Finalize: flush/merge per-domain aggregates; write manifest with counts, failures, and top URLs by score.
+   - Persist markdown content using persistence strategy.
+9) Finalize: flush/merge per-domain aggregates.
 
 ### URL Filtering and Dedup
 - Normalize URLs: remove fragments, normalize trailing slashes, optionally strip UTM parameters.
@@ -144,40 +136,46 @@ rate_limiter = RateLimiter(
 
 ### Output & Naming
 - Markdown: identical naming as current v2 (host subfolder; sanitized filename; length-capped with md5 suffix when needed).
-- JSON (extraction): same base path/filename with `.json` extension; for file_per_domain, aggregate arrays/NDJSON and finalize at end.
+- YouTube transcripts: saved as markdown files in youtube.com domain folder with video metadata.
 
 ### Logging & Metrics
 - Verbose flag to print concise per-item progress: Depth, Score, URL for deep crawl; status per URL for batch.
 - Final per-item stats: pages visited, success/fail counts, average score (deep), depth distribution (deep), output paths.
-- Write `run_manifest.json` in output root with the above summary.
+- Persistence strategies track saved files for potential manifest generation.
 
 ### Testing Plan
 - Unit tests:
-  - Config load/merge; sitemap expansion; selector merge; schema routing.
+  - Config load/merge; sitemap expansion; selector merge.
   - URL normalization and dedup behavior.
   - Persistence strategies: file naming and domain aggregation correctness.
 - Integration tests:
-  - Batch run on small set of known pages; verify outputs and schemas.
+  - Batch run on small set of known pages; verify markdown outputs.
   - Deep crawl on a controlled site with limited depth and max_pages; verify streaming persistence and filters.
-  - YouTube transcript happy-path and error-path.
+  - YouTube transcript extraction and persistence integration.
 
 ### Milestones
-1) Scaffolding: pyproject + package layout + cli stub.
-2) Config loader + sitemap expansion + URL normalization/dedup.
-3) Base crawler setup with selection + arun_many with RateLimiter.
-4) Persistence strategies implementation.
-5) Deep crawler with BestFirst, filters, scorers, streaming.
-6) Structured extraction (JSON/CSS) wiring.
-7) CLI orchestration + manifest + logging polish.
-8) Tests and examples; README update.
+1) ✅ Scaffolding: pyproject + package layout + cli stub.
+2) ✅ Config loader + sitemap expansion + URL normalization/dedup.
+3) ✅ Base crawler setup with selection + arun_many with RateLimiter.
+4) ✅ Persistence strategies implementation.
+5) ✅ Deep crawler with BestFirst, filters, scorers, streaming.
+6) ✅ YouTube transcript extraction with persistence integration.
+7) ✅ CLI orchestration + logging polish.
+8) ❌ Tests and examples; README update.
 
 ### Dependencies (pyproject.toml)
 ```toml
-[tool.poetry.dependencies]
-python = "^3.9"
-crawl4ai = "0.7.4"
-requests = "2.32.3"
-youtube-transcript-api = "0.6.3"
+[project]
+name = "docs-crawler"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "typing-extensions>=4.0.0",
+    "pydantic>=2.11.0",
+    "crawl4ai>=0.7.4",
+    "requests>=2.32.3",
+    "youtube-transcript-api>=0.6.3",
+]
 ```
 
 ### Example Configuration
@@ -199,14 +197,7 @@ youtube-transcript-api = "0.6.3"
       "url": "https://docs-one.zerolend.xyz/sitemap.xml",
       "isSitemap": true,
       "shouldScrap": false,
-      "selectors": ["article", "main", ".content"],
-      "schema": {
-        "type": "jsoncss",
-        "definition": {
-          "title": "h1::text",
-          "sections": "h2::text"
-        }
-      }
+      "selectors": ["article", "main", ".content"]
     },
     {
       "url": "https://www.dailywarden.com/",
@@ -223,8 +214,7 @@ youtube-transcript-api = "0.6.3"
       "include_external": false,
       "include_subdomains": true,
       "paths_to_skip_regex": "ang.org\\/(?!en)[a-z]{2}(-[a-z]{1,2})?\\/|forum.soliditylang.org",
-      "selectors": ["#main-content", "article"],
-      "outputFormat": "both"
+      "selectors": ["#main-content", "article"]
     }
   ],
   "youtube": [
@@ -234,12 +224,9 @@ youtube-transcript-api = "0.6.3"
 ```
 
 ### Backward Compatibility
-- The config loader will detect old format (separate `single_page`, `sitemap`, `scrap` keys) and convert to new unified `items` array.
-- Migration logic in `config.py`:
-  - `single_page` entries → items with `isSitemap=false, shouldScrap=false`
-  - `sitemap` entries → items with `isSitemap=true, shouldScrap=false`
-  - `scrap` entries → items with `isSitemap=false, shouldScrap=true`
-- This ensures existing configs continue to work without modification.
+- Configuration uses Pydantic models with camelCase aliases for JSON compatibility.
+- Sitemap expansion automatically converts sitemap URLs to individual page URLs.
+- URL normalization and deduplication ensure consistent processing.
 
 ### Implementation Steps
 
@@ -337,62 +324,41 @@ youtube-transcript-api = "0.6.3"
 3. Set up streaming result processing
 4. Add concurrency control for deep crawls
 
-#### Step 7: Extraction Module (Day 6-7)
-1. Implement JSON/CSS extraction wrapper
-2. Create schema loader (inline vs file)
-3. Add result shaping and validation
-4. Coordinate with persistence for JSON output
+#### Step 7: YouTube Module (Day 6-7) ✅
+1. ✅ Port YouTube transcript logic from v2
+2. ✅ Adapt to use new persistence strategies
+3. ✅ Add error handling for missing transcripts
+4. ✅ Integrate with CLI orchestration
 
-#### Step 8: YouTube Module (Day 7)
-1. Port YouTube transcript logic from v2
-2. Adapt to use new persistence strategies
-3. Add error handling for missing transcripts
+#### Step 8: CLI and Orchestration (Day 7-8) ✅
+1. ✅ Create main CLI using argparse
+2. ✅ Implement orchestration logic with persistence integration
+3. ✅ Add YouTube processing with persistence
+4. ✅ Implement dry-run mode
+5. ✅ Add verbose logging support
 
-#### Step 9: CLI and Orchestration (Day 7-8)
-1. Create main CLI using argparse
-2. Implement orchestration logic:
-   ```python
-   async def run_crawler(config_path, output_dir, threads=20, dry_run=False):
-       config = load_config(config_path)
-       async with C4ABase(config.defaults) as base:
-           # Split items
-           flat_items = [i for i in config.items if not i.shouldScrap]
-           deep_items = [i for i in config.items if i.shouldScrap]
-           
-           # Run batch
-           if flat_items:
-               batch_runner = BatchRunner(base.crawler, config.defaults)
-               await batch_runner.run(flat_items)
-           
-           # Run deep crawls
-           for item in deep_items:
-               deep_runner = DeepCrawlRunner(base.crawler, config.defaults)
-               await deep_runner.run(item)
-   ```
-3. Add manifest generation
-4. Implement dry-run mode
+#### Step 9: Testing (Day 8-9) ❌
+1. ❌ Unit tests for config loading and migration
+2. ❌ Unit tests for URL normalization and dedup
+3. ❌ Integration test with mock server
+4. ❌ Test persistence strategies
+5. ❌ End-to-end test with sample config
 
-#### Step 10: Testing (Day 8-9)
-1. Unit tests for config loading and migration
-2. Unit tests for URL normalization and dedup
-3. Integration test with mock server
-4. Test persistence strategies
-5. End-to-end test with sample config
-
-#### Step 11: Documentation and Polish (Day 9-10)
-1. Update README with new features
-2. Create migration guide from v1/v2
-3. Add inline code documentation
-4. Create example configs
-5. Performance testing and optimization
+#### Step 10: Documentation and Polish (Day 9-10) ❌
+1. ❌ Update README with new features
+2. ❌ Create migration guide from v1/v2
+3. ❌ Add inline code documentation
+4. ❌ Create example configs
+5. ❌ Performance testing and optimization
 
 ### Notes
 - Deep crawling feature set and streaming behavior per Crawl4AI docs: `https://docs.crawl4ai.com/core/deep-crawling/`.
 - Content selection strategy integration per: `https://docs.crawl4ai.com/core/content-selection/`.
-- JSON/CSS structured extraction per: `https://docs.crawl4ai.com/core/content-selection/#41-pattern-based-with-jsoncssextractionstrategy`.
 - Multi-URL concurrency and RateLimiter per: `https://docs.crawl4ai.com/advanced/multi-url-crawling/`.
 - No scoring/keywords - using default BestFirstCrawlingStrategy behavior
 - Concurrency parameter only relevant for deep crawl scenarios, not batch fetching
+- Structured extraction (JSON/CSS) was removed to simplify the project scope
+- Focus on markdown content extraction with CSS selectors
 
 
 

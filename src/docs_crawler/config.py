@@ -1,70 +1,72 @@
 """
 Configuration module for docs_crawler v2.
 
-Handles loading, validation, and processing of configuration files
-with support for backward compatibility and sitemap expansion.
+Uses Pydantic models for validation and parsing of configuration files.
+Includes helpers for sitemap expansion and URL normalization.
 """
 
 import json
 import logging
 import re
 import urllib.parse
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
 import requests
+from pydantic import BaseModel, Field, ConfigDict
 from xml.etree import ElementTree
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class RateLimiterConfig:
+class RateLimiterConfig(BaseModel):
     """Configuration for rate limiting."""
     base_delay: Tuple[float, float] = (2.0, 4.0)
     max_delay: float = 30.0
     max_retries: int = 5
-    rate_limit_codes: List[int] = field(default_factory=lambda: [429, 503])
+    rate_limit_codes: List[int] = Field(default_factory=lambda: [429, 503])
 
 
-@dataclass
-class Defaults:
+class Defaults(BaseModel):
     """Default configuration values applied to all items."""
     threads: int = 20
-    rate_limiter: RateLimiterConfig = field(default_factory=RateLimiterConfig)
-    output_format: str = "markdown"  # "markdown" | "json" | "both"
+    rate_limiter: RateLimiterConfig = Field(default_factory=RateLimiterConfig, alias="rateLimiter")
+    output_format: str = Field("markdown", alias="outputFormat")  # "markdown" | "json" | "both"
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
-@dataclass
-class Schema:
+class Schema(BaseModel):
     """Schema configuration for structured extraction."""
     type: str = "jsoncss"
-    definition: Union[Dict[str, Any], str] = field(default_factory=dict)  # JSON dict or file path
+    definition: Union[Dict[str, Any], str] = Field(default_factory=dict)  # JSON dict or file path
 
 
-@dataclass
-class Item:
+class Item(BaseModel):
     """Configuration for a single crawl item."""
     url: str
-    is_sitemap: bool = False
-    should_scrap: bool = False
-    selectors: List[str] = field(default_factory=list)
+    is_sitemap: bool = Field(False, alias="isSitemap")
+    should_scrap: bool = Field(False, alias="shouldScrap")
+    selectors: List[str] = Field(default_factory=list)
     schema: Optional[Schema] = None
-    include_external: bool = False
-    include_subdomains: bool = True
-    max_depth: int = 2
-    max_pages: int = 100
-    paths_to_skip_regex: str = ""
-    output_format: Optional[str] = None  # Override default
+    include_external: bool = Field(False, alias="includeExternal")
+    include_subdomains: bool = Field(True, alias="includeSubdomains")
+    max_depth: int = Field(2, alias="maxDepth")
+    max_pages: int = Field(100, alias="maxPages")
+    paths_to_skip_regex: str = Field("", alias="pathsToSkipRegex")
+    output_format: Optional[str] = Field(None, alias="outputFormat")  # Override default
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
-@dataclass
-class Config:
+class Config(BaseModel):
     """Main configuration class."""
-    persistence_strategy: str = "folder_per_domain"  # "folder_per_domain" | "file_per_domain"
-    defaults: Defaults = field(default_factory=Defaults)
-    items: List[Item] = field(default_factory=list)
-    youtube: List[str] = field(default_factory=list)
+    persistence_strategy: str = Field("folder_per_domain", alias="persistenceStrategy")
+    defaults: Defaults = Defaults()
+    items: List[Item] = Field(default_factory=list)
+    youtube: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 def normalize_url(url: str, strip_utm: bool = True) -> str:
@@ -196,72 +198,6 @@ def deduplicate_urls(items: List[Item]) -> List[Item]:
     return unique_items
 
 
-def migrate_legacy_config(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Migrate legacy configuration format to new unified format.
-    
-    Args:
-        data: Configuration dictionary
-        
-    Returns:
-        Migrated configuration dictionary
-    """
-    if "items" in data:
-        # Already in new format
-        return data
-    
-    logger.info("Migrating legacy configuration format")
-    
-    # Create new format
-    new_config = {
-        "persistenceStrategy": "folder_per_domain",
-        "defaults": {
-            "threads": 20,
-            "rateLimiter": {
-                "base_delay": [2.0, 4.0],
-                "max_delay": 30.0,
-                "max_retries": 5,
-                "rate_limit_codes": [429, 503]
-            },
-            "outputFormat": "markdown"
-        },
-        "items": [],
-        "youtube": data.get("youtube", [])
-    }
-    
-    # Migrate single_page entries
-    for url in data.get("single_page", []):
-        new_config["items"].append({
-            "url": url,
-            "isSitemap": False,
-            "shouldScrap": False,
-            "selectors": []
-        })
-    
-    # Migrate sitemap entries
-    for url in data.get("sitemap", []):
-        new_config["items"].append({
-            "url": url,
-            "isSitemap": True,
-            "shouldScrap": False,
-            "selectors": []
-        })
-    
-    # Migrate scrap entries
-    for scrap_item in data.get("scrap", []):
-        new_config["items"].append({
-            "url": scrap_item["url"],
-            "isSitemap": False,
-            "shouldScrap": True,
-            "selectors": [],
-            "include_external": scrap_item.get("allow_external_links", False),
-            "max_depth": scrap_item.get("depth", 2),
-            "paths_to_skip_regex": scrap_item.get("paths_to_skip_regex", "")
-        })
-    
-    return new_config
-
-
 def load_config(config_path: Union[str, Path]) -> Config:
     """
     Load and process configuration from JSON file.
@@ -281,57 +217,10 @@ def load_config(config_path: Union[str, Path]) -> Config:
     
     with open(config_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
-    # Migrate legacy format if needed
-    data = migrate_legacy_config(data)
-    
-    # Parse configuration
-    defaults_data = data.get("defaults", {})
-    defaults = Defaults(
-        threads=defaults_data.get("threads", 20),
-        rate_limiter=RateLimiterConfig(
-            base_delay=tuple(defaults_data.get("rateLimiter", {}).get("base_delay", [2.0, 4.0])),
-            max_delay=defaults_data.get("rateLimiter", {}).get("max_delay", 30.0),
-            max_retries=defaults_data.get("rateLimiter", {}).get("max_retries", 5),
-            rate_limit_codes=defaults_data.get("rateLimiter", {}).get("rate_limit_codes", [429, 503])
-        ),
-        output_format=defaults_data.get("outputFormat", "markdown")
-    )
-    
-    # Parse items
-    items = []
-    for item_data in data.get("items", []):
-        schema_data = item_data.get("schema")
-        schema = None
-        if schema_data:
-            schema = Schema(
-                type=schema_data.get("type", "jsoncss"),
-                definition=schema_data.get("definition", {})
-            )
-        
-        item = Item(
-            url=item_data["url"],
-            is_sitemap=item_data.get("isSitemap", False),
-            should_scrap=item_data.get("shouldScrap", False),
-            selectors=item_data.get("selectors", []),
-            schema=schema,
-            include_external=item_data.get("include_external", False),
-            include_subdomains=item_data.get("include_subdomains", True),
-            max_depth=item_data.get("max_depth", 2),
-            max_pages=item_data.get("max_pages", 100),
-            paths_to_skip_regex=item_data.get("paths_to_skip_regex", ""),
-            output_format=item_data.get("outputFormat")
-        )
-        items.append(item)
-    
-    # Create config object
-    config = Config(
-        persistence_strategy=data.get("persistenceStrategy", "folder_per_domain"),
-        defaults=defaults,
-        items=items,
-        youtube=data.get("youtube", [])
-    )
-    
+
+    # Parse using Pydantic models (expects new format)
+    config = Config.model_validate(data)
+
     # Process configuration
     logger.info("Expanding sitemaps and normalizing URLs")
     config.items = expand_sitemaps(config.items)

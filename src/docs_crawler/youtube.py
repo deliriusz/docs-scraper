@@ -11,15 +11,22 @@ from typing import Optional
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 
+from .persistence import PersistenceStrategy
+
 logger = logging.getLogger(__name__)
 
 
 class YouTubeTranscriptExtractor:
     """Handles YouTube transcript extraction."""
     
-    def __init__(self):
-        """Initialize YouTubeTranscriptExtractor."""
-        pass
+    def __init__(self, persistence: Optional[PersistenceStrategy] = None):
+        """
+        Initialize YouTubeTranscriptExtractor.
+        
+        Args:
+            persistence: Optional persistence strategy for saving transcripts
+        """
+        self.persistence = persistence
     
     def extract_video_id(self, url: str) -> Optional[str]:
         """
@@ -67,3 +74,39 @@ class YouTubeTranscriptExtractor:
         except Exception as e:
             logger.error(f"Error extracting transcript for {url}: {e}")
             return ""
+    
+    async def save_transcript(self, url: str) -> Optional[str]:
+        """
+        Extract and save transcript for YouTube video.
+        
+        Args:
+            url: YouTube video URL
+            
+        Returns:
+            Path where transcript was saved, or None if failed
+        """
+        if not self.persistence:
+            logger.warning("No persistence strategy configured for YouTube transcripts")
+            return None
+        
+        transcript_text = self.get_transcript(url)
+        if not transcript_text:
+            return None
+        
+        # Create a special URL for YouTube transcripts
+        video_id = self.extract_video_id(url)
+        if not video_id:
+            return None
+        
+        # Create a YouTube-specific URL for persistence
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        # Format transcript as markdown
+        markdown_content = f"# YouTube Transcript: {video_id}\n\n**URL:** {url}\n\n{transcript_text}"
+        
+        # Save using persistence strategy
+        path = await self.persistence.save(youtube_url, markdown_content)
+        if path:
+            logger.info(f"Saved YouTube transcript: {url} -> {path}")
+        
+        return path

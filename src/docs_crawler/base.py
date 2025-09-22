@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
-from crawl4ai.rate_limiter import RateLimiter
-from crawl4ai.web_scraping_strategy import LXMLWebScrapingStrategy
+from crawl4ai import RateLimiter
+from crawl4ai import LXMLWebScrapingStrategy
 
 from .config import Item, Defaults, RateLimiterConfig
 
@@ -90,13 +90,12 @@ class C4ABase:
         # Build content selection strategy if selectors are provided
         scraping_strategy = None
         if item.selectors:
-            scraping_strategy = LXMLWebScrapingStrategy(
-                css_selector=", ".join(item.selectors)
-            )
+            scraping_strategy = LXMLWebScrapingStrategy()
         
         return CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
             scraping_strategy=scraping_strategy,
+            css_selector=", ".join(item.selectors) if item.selectors else None,
             # Add other configuration as needed
         )
     
@@ -119,8 +118,8 @@ class C4ABase:
                 re.compile(item.paths_to_skip_regex)
                 filters.append(
                     URLPatternFilter(
-                        pattern=item.paths_to_skip_regex,
-                        action="block"
+                        patterns=item.paths_to_skip_regex,
+                        reverse=True  # Block matching patterns
                     )
                 )
                 logger.debug(f"Added URL pattern filter: {item.paths_to_skip_regex}")
@@ -135,8 +134,8 @@ class C4ABase:
                 external_pattern = f"^(?!https?://(www\\.)?{re.escape(domain)})"
                 filters.append(
                     URLPatternFilter(
-                        pattern=external_pattern,
-                        action="block"
+                        patterns=external_pattern,
+                        reverse=True  # Block external domains
                     )
                 )
                 logger.debug(f"Added domain filter for: {domain}")

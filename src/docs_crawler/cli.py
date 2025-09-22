@@ -16,7 +16,7 @@ from .base import C4ABase
 from .batch_runner import BatchRunner
 from .deepcrawl_runner import DeepCrawlRunner
 from .youtube import YouTubeTranscriptExtractor
-from .persistence import FolderPerDomainStrategy, FilePerDomainStrategy
+from .persistence import create_persistence_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ def setup_logging(verbose: bool = False) -> None:
 async def run_crawler(
     config_path: str,
     output_dir: str,
-    threads: int = 20,
     dry_run: bool = False,
     verbose: bool = False
 ) -> None:
@@ -58,15 +57,13 @@ async def run_crawler(
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         # Initialize persistence strategy
-        if config.persistence_strategy == "folder_per_domain":
-            persistence = FolderPerDomainStrategy(output_dir)
-        elif config.persistence_strategy == "file_per_domain":
-            persistence = FilePerDomainStrategy(output_dir)
-        else:
-            raise ValueError(f"Unknown persistence strategy: {config.persistence_strategy}")
+        persistence = create_persistence_strategy(
+            config.persistence_strategy, 
+            output_dir
+        )
         
-        # Initialize YouTube extractor
-        youtube_extractor = YouTubeTranscriptExtractor()
+        # Initialize YouTube extractor with persistence
+        youtube_extractor = YouTubeTranscriptExtractor(persistence)
         
         # Process YouTube URLs
         if config.youtube:
@@ -75,13 +72,14 @@ async def run_crawler(
                 if dry_run:
                     logger.info(f"Would process YouTube: {url}")
                 else:
-                    transcript = youtube_extractor.get_transcript(url)
-                    if transcript:
-                        # TODO: Save transcript using persistence strategy
-                        logger.info(f"Extracted transcript for: {url}")
+                    path = await youtube_extractor.save_transcript(url)
+                    if path:
+                        logger.info(f"Saved YouTube transcript: {url} -> {path}")
+                    else:
+                        logger.warning(f"Failed to save YouTube transcript: {url}")
         
         # Split items into flat and deep crawling
-        flat_items = [(item.url, item) for item in config.items if not item.should_scrap]
+        flat_items = [item for item in config.items if not item.should_scrap]
         deep_items = [item for item in config.items if item.should_scrap]
         
         logger.info(f"Found {len(flat_items)} flat items and {len(deep_items)} deep crawl items")
@@ -91,19 +89,23 @@ async def run_crawler(
             # Process flat items
             if flat_items:
                 logger.info("Processing flat items")
-                batch_runner = BatchRunner(base)
+                batch_runner = BatchRunner(base, config.defaults, persistence)
                 if not dry_run:
                     await batch_runner.run(flat_items)
+                    stats = batch_runner.get_stats()
+                    logger.info(f"Batch processing stats: {stats.success} success, {stats.failed} failed, {stats.skipped} skipped")
                 else:
-                    for url, item in flat_items:
-                        logger.info(f"Would process flat: {url}")
+                    for item in flat_items:
+                        logger.info(f"Would process flat: {item.url}")
             
             # Process deep crawl items
             for item in deep_items:
                 logger.info(f"Processing deep crawl: {item.url}")
-                deep_runner = DeepCrawlRunner(base)
+                deep_runner = DeepCrawlRunner(base, config.defaults, persistence)
                 if not dry_run:
                     await deep_runner.run(item)
+                    stats = deep_runner.get_stats()
+                    logger.info(f"Deep crawl stats: {stats.success} success, {stats.failed} failed, {stats.skipped} skipped, max_depth: {stats.max_depth_reached}")
                 else:
                     logger.info(f"Would deep crawl: {item.url}")
         
@@ -136,8 +138,6 @@ Examples:
     run_parser = subparsers.add_parser('run', help='Run the crawler')
     run_parser.add_argument('config_file', help='Path to JSON configuration file')
     run_parser.add_argument('output_dir', help='Directory to store crawled files')
-    run_parser.add_argument('--threads', type=int, default=20, 
-                          help='Number of concurrent threads (default: 20)')
     run_parser.add_argument('--dry-run', action='store_true',
                           help='Print URLs only, don\'t save files')
     run_parser.add_argument('--verbose', '-v', action='store_true',
@@ -149,7 +149,6 @@ Examples:
         asyncio.run(run_crawler(
             config_path=args.config_file,
             output_dir=args.output_dir,
-            threads=args.threads,
             dry_run=args.dry_run,
             verbose=args.verbose
         ))
