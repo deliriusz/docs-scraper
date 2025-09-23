@@ -35,8 +35,6 @@ class Defaults(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-
-
 class Item(BaseModel):
     """Configuration for a single crawl item."""
     url: str

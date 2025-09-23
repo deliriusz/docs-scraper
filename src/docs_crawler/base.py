@@ -9,9 +9,9 @@ import re
 from typing import List, Optional, Dict, Any
 from urllib.parse import urlparse
 
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode, BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
-from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
+from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter, URLFilter
 from crawl4ai import RateLimiter
 from crawl4ai import LXMLWebScrapingStrategy
 
@@ -91,14 +91,15 @@ class C4ABase:
         scraping_strategy = None
         if item.selectors:
             scraping_strategy = LXMLWebScrapingStrategy()
-        
+
         return CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
             scraping_strategy=scraping_strategy,
+            deep_crawl_strategy=self.build_best_first_strategy(item) if item.should_scrap else None,
             target_elements=item.selectors if item.selectors else None,
         )
     
-    def build_filter_chain(self, item: Item) -> Optional[FilterChain]:
+    def build_filter_chain(self, item: Item) -> FilterChain:
         """
         Build filter chain for deep crawling based on item configuration.
         
@@ -108,8 +109,8 @@ class C4ABase:
         Returns:
             Configured FilterChain or None
         """
-        filters = []
-        
+        filters:  List[URLFilter] = []
+
         # Add URL pattern filter for paths_to_skip_regex
         if item.paths_to_skip_regex:
             try:
@@ -124,37 +125,52 @@ class C4ABase:
                 logger.debug(f"Added URL pattern filter: {item.paths_to_skip_regex}")
             except re.error as e:
                 logger.warning(f"Invalid regex pattern '{item.paths_to_skip_regex}': {e}")
-        
-        # Add domain filter for include_external
-        if not item.include_external:
-            domain = self._extract_domain(item.url)
-            if domain:
-                # Block external domains
-                external_pattern = f"^(?!https?://(www\\.)?{re.escape(domain)})"
-                filters.append(
-                    URLPatternFilter(
-                        patterns=external_pattern,
-                        reverse=True  # Block external domains
-                    )
-                )
-                logger.debug(f"Added domain filter for: {domain}")
-        
+
+        domain = self._extract_domain(item.url)
+
         # Add subdomain filter
-        if not item.include_subdomains and item.include_external:
-            domain = self._extract_domain(item.url)
-            if domain:
-                # Only allow exact domain matches
-                exact_domain_pattern = f"^https?://(www\\.)?{re.escape(domain)}/"
-                filters.append(
-                    URLPatternFilter(
-                        pattern=exact_domain_pattern,
-                        action="allow"
-                    )
+        if item.include_subdomains:
+            # Only allow exact domain matches
+            exact_domain_pattern = f"^.*\.?{re.escape(domain)}(:\d+)?.*"
+            filters.append(
+                URLPatternFilter(
+                    patterns=exact_domain_pattern,
+                    reverse=False
                 )
-                logger.debug(f"Added exact domain filter for: {domain}")
-        
-        return FilterChain(filters) if filters else None
-    
+            )
+            logger.debug(f"Added subdomain filter for: {domain}")
+        else:
+            exact_domain_pattern = f"^https?://(www\.)?{re.escape(domain)}(:\d+)?.*"
+            filters.append(
+                URLPatternFilter(
+                    patterns=exact_domain_pattern,
+                    reverse=False
+                )
+            )
+            logger.debug(f"Added exact domain filter for: {domain}")
+
+        return FilterChain(filters)
+
+    def build_bfs_strategy(self, item: Item) -> BFSDeepCrawlStrategy:
+        """
+        Build BestFirstCrawlingStrategy for deep crawling.
+
+        Args:
+            item: Item configuration
+
+        Returns:
+            Configured BestFirstCrawlingStrategy
+        """
+        filter_chain = self.build_filter_chain(item)
+
+        return BFSDeepCrawlStrategy(
+            max_depth=item.max_depth,
+            max_pages=item.max_pages,
+            include_external=item.include_external,
+            filter_chain=filter_chain,
+            # No scoring for now - using default behavior
+        )
+
     def build_best_first_strategy(self, item: Item) -> BestFirstCrawlingStrategy:
         """
         Build BestFirstCrawlingStrategy for deep crawling.

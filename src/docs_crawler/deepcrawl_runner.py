@@ -4,12 +4,10 @@ Deep crawl runner module for docs_crawler v2.
 Handles deep crawling using BestFirstCrawlingStrategy with streaming results.
 """
 
-import asyncio
 import logging
-from dataclasses import dataclass
-from typing import List, Optional, Dict
+from dataclasses import dataclass, field
+from typing import List, Dict
 from crawl4ai import CrawlResult
-from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
 
 from .base import C4ABase
 from .config import Item, Defaults
@@ -28,6 +26,7 @@ class DeepCrawlStats:
     max_depth_reached: int = 0
     avg_score: float = 0.0
     depth_distribution: Dict[str, int] = None
+    urls: List[str] = field(default_factory=list)
     
     def __post_init__(self):
         if self.depth_distribution is None:
@@ -49,7 +48,6 @@ class DeepCrawlRunner:
         self.base = base
         self.defaults = defaults
         self.persistence = persistence
-        self.results = []
         self.stats = DeepCrawlStats()
     
     async def run(self, item: Item) -> List[CrawlResult]:
@@ -64,9 +62,6 @@ class DeepCrawlRunner:
         """
         logger.info(f"Starting deep crawl: {item.url} (max_depth={item.max_depth}, max_pages={item.max_pages})")
         
-        # Build BestFirstCrawlingStrategy
-        strategy = self.base.build_best_first_strategy(item)
-        
         # Build run config for the starting URL
         run_config = self.base.build_run_config(item)
         
@@ -75,26 +70,26 @@ class DeepCrawlRunner:
             results = await self.base.crawler.arun(
                 url=item.url,
                 config=run_config,
-                strategy=strategy
             )
             
             # Process results
             for result in results:
-                await self._process_streaming_result(result, item)
+                await self._process_streaming_result(result)
             
             # Calculate final statistics
             self._calculate_final_stats()
             
             logger.info(f"Deep crawl completed: {self.stats.success} success, {self.stats.failed} failed, {self.stats.skipped} skipped")
             logger.info(f"Max depth reached: {self.stats.max_depth_reached}, Average score: {self.stats.avg_score:.2f}")
-            
-            return self.results
-            
+            logger.info(f"URLs visited: {self.stats.urls}")
+
+            return results
+
         except Exception as e:
             logger.error(f"Deep crawl failed for {item.url}: {e}")
             raise
     
-    async def _process_streaming_result(self, result: CrawlResult, item: Item) -> None:
+    async def _process_streaming_result(self, result: CrawlResult) -> None:
         """
         Process a single streaming result from deep crawl.
         
@@ -103,7 +98,8 @@ class DeepCrawlRunner:
             item: Item configuration
         """
         self.stats.total_pages += 1
-        
+        self.stats.urls.append(result.url)
+
         if not result.success:
             logger.error(f"Failed to crawl {result.url}: {result.error_message}")
             self.stats.failed += 1
@@ -123,8 +119,7 @@ class DeepCrawlRunner:
             self._update_stats(result)
             
             self.stats.success += 1
-            self.results.append(result)
-            
+
             logger.debug(f"Processed: {result.url} (depth: {getattr(result, 'depth', 'unknown')}, score: {getattr(result, 'score', 'unknown')})")
             
         except Exception as e:
@@ -177,7 +172,3 @@ class DeepCrawlRunner:
     def get_stats(self) -> DeepCrawlStats:
         """Get processing statistics."""
         return self.stats
-    
-    def get_results(self) -> List[CrawlResult]:
-        """Get processed results."""
-        return self.results.copy()
