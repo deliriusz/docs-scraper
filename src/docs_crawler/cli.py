@@ -9,7 +9,6 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .config import load_config
 from .base import C4ABase
@@ -19,7 +18,6 @@ from .youtube import YouTubeTranscriptExtractor
 from .persistence import create_persistence_strategy
 
 logger = logging.getLogger(__name__)
-
 
 def setup_logging(verbose: bool = False) -> None:
     """Set up logging configuration."""

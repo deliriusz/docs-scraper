@@ -69,7 +69,7 @@ class BatchRunner:
             # Use arun_many with rate limiting
             results = await self.base.crawler.arun_many(
                 urls=urls,
-                configs=configs,
+                config=configs,
                 concurrency=self.defaults.threads,
                 rate_limiter=self.base.rate_limiter
             )
