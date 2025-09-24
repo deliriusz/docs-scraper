@@ -172,3 +172,4 @@ cython_debug/
 
 .aider**
 test/output/*
+scrap_files/**
